@@ -20,6 +20,7 @@ class Experiment(object):
         import subprocess
         cmd = self.execstring_
         proc = subprocess.run(cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print(proc.stderr)
         t=proc.stdout.splitlines()[-1].split()[0]
         return int(t)
 
