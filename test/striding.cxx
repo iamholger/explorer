@@ -63,7 +63,8 @@ double maxEigenvalue(
 // 2D
 std::tuple<int, int> glob2loc(const int g, const int J)
 {
-    return std::make_tuple(g/J,g%J);
+    return std::make_tuple(g/J,g%J); // test inversion
+    //return std::make_tuple(g/J,g%J);
 }
 
 // 3D
@@ -114,18 +115,48 @@ void strider2(queue& Q, const int haloSize, const int sourcePatchSize, const int
 
   Q.submit([&](handler &cgh)
   {
-    cgh.parallel_for(nd_range<3>{{NPT, numVPAIP, (unknowns+aux)*numVPAIP}, {$GX, $GY, $GZ}}, [=](nd_item<3> item)
+    cgh.parallel_for(nd_range<3>{{NPT, (unknowns+aux)*numVPAIP, numVPAIP}, {$GX, $GY, $GZ}}, [=](nd_item<3> item)
     {
-        const size_t pidx=item.get_global_id(0);//[0];
+        const size_t pidx=item.get_global_id(0);
         double *reconstructedPatch = Qin + sourcePatchSize*pidx;
-        const size_t x=item.get_global_id(1);
-        auto [i,y] = glob2loc(item.get_global_id(2), numVPAIP);
+        const size_t y=item.get_global_id(2);
+//        auto [i,y] = glob2loc(item.get_global_id(2), numVPAIP);
+        auto [x,i] = glob2loc(item.get_global_id(1), (unknowns+aux)*numVPAIP);
         int sourceIndex      = (y+1)*(numVPAIP+ 3*haloSize) + x - y;
         int destinationIndex = y*numVPAIP + x;
         Qout[pidx*destPatchSize + destinationIndex*(unknowns+aux)+i] = reconstructedPatch[sourceIndex*(unknowns+aux)+i];
     });
   }).wait();
 }
+
+//105 // Note this one is fast when using WG size {1,20,5}
+//106 template<
+//107     int numVPAIP,
+//108     int unknowns,
+//109     int aux
+//110     >
+//111 void strider2(queue& Q, const int haloSize, const int sourcePatchSize, const int destPatchSize, double * Qin, double * Qout, bool skipSourceTerm)
+//112 {
+//113   const size_t NPT=20000;
+//114 
+//115   Q.submit([&](handler &cgh)
+//116   {
+//117     cgh.parallel_for(nd_range<3>{{NPT, (unknowns+aux)*numVPAIP, numVPAIP}, {1, 20, 5}}, [=](nd_item<3> item)
+//118     {
+//119         const size_t pidx=item.get_global_id(0);//[0];
+//120         double *reconstructedPatch = Qin + sourcePatchSize*pidx;
+//121         const size_t y=item.get_global_id(2);
+//122         auto [x,i] = glob2loc(item.get_global_id(1), (unknowns+aux)*numVPAIP);
+//123         int sourceIndex      = (y+1)*(numVPAIP+ 3*haloSize) + x - y;
+//124         int destinationIndex = y*numVPAIP + x;
+//125         Qout[pidx*destPatchSize + destinationIndex*(unknowns+aux)+i] = reconstructedPatch[sourceIndex*(unknowns+aux)+i];
+//126     });
+//127   }).wait();
+//128 }
+//129 
+
+
+
 
 template<
     int numVPAIP,
