@@ -102,7 +102,7 @@ void strider(queue& Q, const int haloSize, const int sourcePatchSize, const int 
   }).wait();
 }
 
-
+// Note this one is fast when using WG size {1,20,5}
 template<
     int numVPAIP,
     int unknowns,
@@ -120,9 +120,32 @@ void strider2(queue& Q, const int haloSize, const int sourcePatchSize, const int
         double *reconstructedPatch = Qin + sourcePatchSize*pidx;
         const size_t x=item.get_global_id(1);
         auto [i,y] = glob2loc(item.get_global_id(2), numVPAIP);
-          int sourceIndex      = (y+1)*(numVPAIP+ 3*haloSize) + x - y;
-          int destinationIndex = y*numVPAIP + x;
-          Qout[pidx*destPatchSize + destinationIndex*(unknowns+aux)+i] = reconstructedPatch[sourceIndex*(unknowns+aux)+i];
+        int sourceIndex      = (y+1)*(numVPAIP+ 3*haloSize) + x - y;
+        int destinationIndex = y*numVPAIP + x;
+        Qout[pidx*destPatchSize + destinationIndex*(unknowns+aux)+i] = reconstructedPatch[sourceIndex*(unknowns+aux)+i];
+    });
+  }).wait();
+}
+
+template<
+    int numVPAIP,
+    int unknowns,
+    int aux
+    >
+void strider3(queue& Q, const int haloSize, const int sourcePatchSize, const int destPatchSize, double * Qin, double * Qout, bool skipSourceTerm)
+{
+  const size_t NPT=$XXX;
+
+  Q.submit([&](handler &cgh)
+  {
+    cgh.parallel_for(nd_range<2>{{NPT, numVPAIP*(unknowns+aux)*numVPAIP}, {$GX, $GY}}, [=](nd_item<2> item)
+    {
+        const size_t pidx=item.get_global_id(0);//[0];
+        double *reconstructedPatch = Qin + sourcePatchSize*pidx;
+        auto [i,y,x] = glob2loc(item.get_global_id(1),numVPAIP,numVPAIP);
+        int sourceIndex      = (y+1)*(numVPAIP+ 3*haloSize) + x - y;
+        int destinationIndex = y*numVPAIP + x;
+        Qout[pidx*destPatchSize + destinationIndex*(unknowns+aux)+i] = reconstructedPatch[sourceIndex*(unknowns+aux)+i];
     });
   }).wait();
 }
@@ -158,6 +181,9 @@ int main(int argc, char* argv[])
     strider2<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
     std::cout << "sum: " << std::accumulate(Xout, Xout + destPS*NPT, 0) << "\n";
 
+    for (int i=0;i<destPS*NPT;i++) Xout[i] = 0;
+    strider3<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
+    std::cout << "sum: " << std::accumulate(Xout, Xout + destPS*NPT, 0) << "\n";
     
     auto start = std::chrono::steady_clock::now();   
     for (int i=0;i<std::atoi(argv[1]);i++) 
@@ -168,6 +194,12 @@ int main(int argc, char* argv[])
     start = std::chrono::steady_clock::now();   
     for (int i=0;i<std::atoi(argv[1]);i++) 
       strider2<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
+    end = std::chrono::steady_clock::now();
+    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()   << " ms" << std::endl;
+
+    start = std::chrono::steady_clock::now();   
+    for (int i=0;i<std::atoi(argv[1]);i++) 
+      strider3<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
     end = std::chrono::steady_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()   << " ms" << std::endl;
 
