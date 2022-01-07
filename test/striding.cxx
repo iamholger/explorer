@@ -102,6 +102,31 @@ void strider(queue& Q, const int haloSize, const int sourcePatchSize, const int 
   }).wait();
 }
 
+
+template<
+    int numVPAIP,
+    int unknowns,
+    int aux
+    >
+void strider2(queue& Q, const int haloSize, const int sourcePatchSize, const int destPatchSize, double * Qin, double * Qout, bool skipSourceTerm)
+{
+  const size_t NPT=$XXX;
+
+  Q.submit([&](handler &cgh)
+  {
+    cgh.parallel_for(nd_range<3>{{NPT, numVPAIP, (unknowns+aux)*numVPAIP}, {$GX, $GY, $GZ}}, [=](nd_item<3> item)
+    {
+        const size_t pidx=item.get_global_id(0);//[0];
+        double *reconstructedPatch = Qin + sourcePatchSize*pidx;
+        const size_t x=item.get_global_id(1);
+        auto [i,y] = glob2loc(item.get_global_id(2), numVPAIP);
+          int sourceIndex      = (y+1)*(numVPAIP+ 3*haloSize) + x - y;
+          int destinationIndex = y*numVPAIP + x;
+          Qout[pidx*destPatchSize + destinationIndex*(unknowns+aux)+i] = reconstructedPatch[sourceIndex*(unknowns+aux)+i];
+    });
+  }).wait();
+}
+
 int main(int argc, char* argv[])
 {
     std::cout << "  Using SYCL device: " << Q.get_device().get_info<sycl::info::device::name>() << std::endl;
@@ -125,11 +150,25 @@ int main(int argc, char* argv[])
     for (int i=0;i<srcPS*NPT;i++) Xin[i] = unif(re);
     auto Xout = malloc_shared<double>(destPS*NPT, Q);
 
+    for (int i=0;i<destPS*NPT;i++) Xout[i] = 0;
+    strider<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
+    std::cout << "sum should be: " << std::accumulate(Xout, Xout + destPS*NPT, 0) << "\n";
+
+    for (int i=0;i<destPS*NPT;i++) Xout[i] = 0;
+    strider2<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
+    std::cout << "sum: " << std::accumulate(Xout, Xout + destPS*NPT, 0) << "\n";
+
     
     auto start = std::chrono::steady_clock::now();   
     for (int i=0;i<std::atoi(argv[1]);i++) 
       strider<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
     auto end = std::chrono::steady_clock::now();
+    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()   << " ms" << std::endl;
+    
+    start = std::chrono::steady_clock::now();   
+    for (int i=0;i<std::atoi(argv[1]);i++) 
+      strider2<numVPAIP,unknowns,0>(Q, 1, srcPS, destPS ,Xin, Xout, true);
+    end = std::chrono::steady_clock::now();
     std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()   << " ms" << std::endl;
 
     free(Xin, Q);
